@@ -48,8 +48,27 @@ class KVStore:
         self.max_size = max_size if max_size is not None else settings.MAX_KEYS
 
         # === TODO START: Initialize internal storage ===
-        raise NotImplementedError("TODO: Implement this method")
+        self._store = OrderedDict()
         # === TODO END ===
+
+    def _is_expired(self, key: str) -> bool:
+        """
+        Check if a key is expired. If expired, delete it.
+        """
+        if key not in self._store:
+            return True
+
+        _, expires_at = self._store[key]
+
+        if expires_at == 0:
+            return False
+
+        if time.time() >= expires_at:
+            del self._store[key]
+            return True
+
+        return False
+
 
     def put(self, key: str, value: str, ttl: int = 0) -> bool:
         """
@@ -72,7 +91,22 @@ class KVStore:
                   evict LRU item if cache full when adding new key
         """
         # === TODO START: Implement put with TTL and LRU ===
-        raise NotImplementedError("TODO: Implement this method")
+        now = time.time()
+        expires_at = 0 if ttl == 0 else now + ttl
+
+        # If key exists → update + mark recent
+        if key in self._store:
+            self._store[key] = (value, expires_at)
+            self._store.move_to_end(key)
+            return True
+
+        # Evict LRU if cache full
+        if len(self._store) >= self.max_size:
+            self._store.popitem(last=False)  # LRU eviction
+
+        self._store[key] = (value, expires_at)
+        return True
+
         # === TODO END ===
 
     def get(self, key: str) -> Optional[str]:
@@ -93,7 +127,21 @@ class KVStore:
         - Task 5: Update LRU order - move accessed key to most recent
         """
         # === TODO START: Implement get with TTL check and LRU update ===
-        raise NotImplementedError("TODO: Implement this method")
+        if key not in self._store:
+            return None
+
+        value, expires_at = self._store[key]
+        now = time.time()
+
+        # TTL expired
+        if expires_at != 0 and expires_at < now:
+            del self._store[key]
+            return None
+
+        # Mark as recently used
+        self._store.move_to_end(key)
+        return value
+
         # === TODO END ===
 
     def delete(self, key: str) -> bool:
@@ -113,7 +161,10 @@ class KVStore:
         - Task 4: Expired keys should be treated as non-existent (return False)
         """
         # === TODO START: Implement delete with expiration check ===
-        raise NotImplementedError("TODO: Implement this method")
+        if key not in self._store:
+            return False
+        del self._store[key]
+        return True
         # === TODO END ===
 
     def exists(self, key: str) -> bool:
@@ -133,7 +184,19 @@ class KVStore:
         - Task 4: Return False for expired keys; perform lazy cleanup
         """
         # === TODO START: Implement exists with expiration check ===
-        raise NotImplementedError("TODO: Implement this method")
+        if key not in self._store:
+            return False
+
+        _, expires_at = self._store[key]
+        now = time.time()
+
+        if expires_at != 0 and expires_at < now:
+            del self._store[key]
+            return False
+
+        # Mark as recently used
+        self._store.move_to_end(key)
+        return True
         # === TODO END ===
 
     def size(self) -> int:
@@ -149,9 +212,9 @@ class KVStore:
 
     def clear(self) -> None:
         """Remove all keys from the store."""
-        # === TODO START: Implement clear ===
-        raise NotImplementedError("TODO: Implement this method")
-        # === TODO END ===
+        # # === TODO START: Implement clear ===
+        self._store.clear()
+        # # === TODO END ===
 
     def cleanup_expired(self) -> int:
         """
@@ -165,9 +228,17 @@ class KVStore:
 
         Task 4 Bonus: Implement this for active expiration cleanup.
         """
-        # === TODO START: Implement cleanup_expired (Bonus) ===
-        raise NotImplementedError("TODO: Implement this method")
-        # === TODO END ===
+        # # === TODO START: Implement cleanup_expired (Bonus) ===
+        now = time.time()
+        removed = 0
+
+        for key, (_, expires_at) in list(self._store.items()):
+            if expires_at > 0 and expires_at < now:
+                del self._store[key]
+                removed += 1
+
+        return removed
+        # # === TODO END ===
 
     def get_stats(self) -> Dict[str, Any]:
         """

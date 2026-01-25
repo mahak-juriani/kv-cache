@@ -69,7 +69,30 @@ class ProtocolParser:
             - Handle errors gracefully (return UNKNOWN command)
         """
         # === TODO START: Implement parse_request ===
-        raise NotImplementedError("TODO: Implement this method")
+        if not data or not data.strip():
+            return Command(CommandType.UNKNOWN, raw=data)
+
+        raw = data.rstrip("\n")
+        parts = raw.strip().split()
+
+        if not parts:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        cmd = parts[0].upper()
+
+        if cmd == CommandType.PUT.name:
+            return self._parse_put(parts, raw)
+        elif cmd == CommandType.GET.name:
+            return self._parse_get(parts, raw)
+        elif cmd == CommandType.DELETE.name:
+            return self._parse_delete(parts, raw)
+        elif cmd == CommandType.EXISTS.name:
+            return self._parse_exists(parts, raw)
+        elif cmd == CommandType.QUIT.name:
+            return Command(CommandType.QUIT, raw=raw)
+
+        return Command(CommandType.UNKNOWN, raw=raw)
+
         # === TODO END ===
 
     def _parse_put(self, parts: list, raw: str) -> Command:
@@ -86,7 +109,25 @@ class ProtocolParser:
             Command object for PUT, or UNKNOWN if invalid
         """
         # === TODO START: Implement _parse_put ===
-        raise NotImplementedError("TODO: Implement this method")
+        if len(parts) not in (3, 4):
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        key = parts[1]
+        value = parts[2]
+
+        if len(key) > self.max_key_length or len(value) > self.max_value_length:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        ttl = 0
+        if len(parts) == 4:
+            try:
+                ttl = int(parts[3])
+                if ttl < 0:
+                    return Command(CommandType.UNKNOWN, raw=raw)
+            except ValueError:
+                return Command(CommandType.UNKNOWN, raw=raw)
+
+        return Command(CommandType.PUT, key=key, value=value, ttl=ttl, raw=raw)
         # === TODO END ===
 
     def _parse_get(self, parts: list, raw: str) -> Command:
@@ -96,7 +137,14 @@ class ProtocolParser:
         Format: GET <key>
         """
         # === TODO START: Implement _parse_get ===
-        raise NotImplementedError("TODO: Implement this method")
+        if len(parts) != 2:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        key = parts[1]
+        if len(key) > self.max_key_length:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        return Command(CommandType.GET, key=key, raw=raw)
         # === TODO END ===
 
     def _parse_delete(self, parts: list, raw: str) -> Command:
@@ -106,7 +154,14 @@ class ProtocolParser:
         Format: DELETE <key>
         """
         # === TODO START: Implement _parse_delete ===
-        raise NotImplementedError("TODO: Implement this method")
+        if len(parts) != 2:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        key = parts[1]
+        if len(key) > self.max_key_length:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        return Command(CommandType.DELETE, key=key, raw=raw)
         # === TODO END ===
 
     def _parse_exists(self, parts: list, raw: str) -> Command:
@@ -116,7 +171,14 @@ class ProtocolParser:
         Format: EXISTS <key>
         """
         # === TODO START: Implement _parse_exists ===
-        raise NotImplementedError("TODO: Implement this method")
+        if len(parts) != 2:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        key = parts[1]
+        if len(key) > self.max_key_length:
+            return Command(CommandType.UNKNOWN, raw=raw)
+
+        return Command(CommandType.EXISTS, key=key, raw=raw)
         # === TODO END ===
 
     def format_response(self, response: Response) -> str:
@@ -145,5 +207,10 @@ class ProtocolParser:
             - Always end with newline character
         """
         # === TODO START: Implement format_response ===
-        raise NotImplementedError("TODO: Implement this method")
+        if response.status.name == "OK":
+            if hasattr(response, "value") and response.value is not None:
+                return f"OK {response.value}\n"
+            return f"OK {response.message}\n"
+
+        return f"ERROR {response.message}\n"
         # === TODO END ===
