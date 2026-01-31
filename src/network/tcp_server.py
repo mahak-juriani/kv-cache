@@ -13,7 +13,7 @@ Key asyncio concepts needed:
 - StreamWriter.write() / drain(): Send data to client
 - Proper connection cleanup with writer.close() / wait_closed()
 """
-
+import hashlib
 import asyncio
 import logging
 from asyncio import StreamReader, StreamWriter
@@ -82,37 +82,41 @@ class KVServer:
         self._connection_count = 0
         self._total_requests = 0
 
-    async def handle_client(
-            self,
-            reader: StreamReader,
-            writer: StreamWriter
-    ) -> None:
-        """
-        Handle a single client connection.
 
-        This coroutine is called for each new client connection.
-        It reads commands from the client, processes them, and sends
-        responses until the client disconnects or sends QUIT.
+    def _get_shard_id(self, key: str) -> int:
+        h = hashlib.sha256(key.encode()).hexdigest()
+        return int(h, 16) % settings.NUM_SHARDS
 
-        Args:
-            reader: StreamReader for reading from the client
-            writer: StreamWriter for writing to the client
 
-        Protocol flow:
-            1. Read a line (command) from the client
-            2. Parse the command using ProtocolParser
-            3. Execute the command on the KVStore
-            4. Format and send the response
-            5. Repeat until QUIT or client disconnects
+    def _get_primary_node(self, shard_id: int) -> int:
+        return settings.SHARD_TO_NODE[shard_id]
 
-        Implementation requirements:
-        - Get client address for logging (writer.get_extra_info('peername'))
-        - Loop reading lines until empty data (disconnect) or QUIT
-        - Handle decode errors gracefully
-        - Always close the writer in a finally block
-        - Handle ConnectionResetError and other exceptions
-        """
-        # === TODO START: Implement handle_client ===
+
+    def _is_local_shard(self, key: str) -> bool:
+        shard_id = self._get_shard_id(key)
+        return self._get_primary_node(shard_id) == settings.NODE_ID
+    
+    async def _forward_request(self, raw_command: str, node_id: int) -> Response:
+        host, port = settings.CLUSTER_NODES[node_id]
+
+        reader, writer = await asyncio.open_connection(host, port)
+
+        writer.write((raw_command + "\n").encode())
+        await writer.drain()
+
+        data = await reader.readline()
+
+        writer.write(b"QUIT\n")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+        response_str = data.decode().strip()
+        return self.parser.parse_response_string(response_str)
+
+
+
+    async def handle_client(self, reader: StreamReader, writer: StreamWriter) -> None:
         addr = writer.get_extra_info("peername")
         logger.info(f"Client connected: {addr}")
         self._connection_count += 1
@@ -121,7 +125,7 @@ class KVServer:
             while True:
                 data = await reader.readline()
                 if not data:
-                    break  # client disconnected
+                    break
 
                 try:
                     message = data.decode().strip()
@@ -131,13 +135,22 @@ class KVServer:
                     await writer.drain()
                     continue
 
-                command = self.parser.parse_request(message)
+                # ---------- forwarding marker ----------
+                is_forwarded = False
+                if message.startswith("__FORWARDED__"):
+                    is_forwarded = True
+                    message = message.replace("__FORWARDED__ ", "", 1)
 
+                # ---------- ALWAYS create command ----------
+                command = self.parser.parse_request(message)
+                command.is_forwarded = is_forwarded
+
+                # ---------- NOW it is safe ----------
                 if command.type == CommandType.QUIT:
                     logger.info(f"Client quit: {addr}")
                     break
 
-                response = self._execute_command(command)
+                response = await self._execute_command(command)
                 writer.write(self.parser.format_response(response).encode())
                 await writer.drain()
 
@@ -149,48 +162,25 @@ class KVServer:
             writer.close()
             await writer.wait_closed()
             logger.info(f"Client disconnected: {addr}")
-        # === TODO END ===
 
-    def _execute_command(self, command) -> Response:
-        """
-        Execute a parsed command on the store.
 
-        This is a helper method that routes commands to the appropriate
-        KVStore method and returns the formatted response.
-
-        Args:
-            command: The Command object to execute
-
-        Returns:
-            Response object with the result
-        """
-        # === TODO START: Implement _execute_command ===
+    async def _execute_command(self, command) -> Response:
         self._total_requests += 1
-        if command.type == CommandType.UNKNOWN:
-            return Response.error("invalid command")
 
-        if command.type == CommandType.PUT:
-            self.store.put(command.key, command.value, command.ttl)
-            return Response.stored()
+        # Commands without keys are always local
+        if not command.key:
+            return self._execute_local(command)
 
-        if command.type == CommandType.GET:
-            value = self.store.get(command.key)
-            if value is None:
-                return Response.key_not_found()
-            return Response.value_response(value)
+        # Shard check
+        if not self._is_local_shard(command.key):
+            shard_id = self._get_shard_id(command.key)
+            node_id = self._get_primary_node(shard_id)
+            return await self._forward_request(command.raw, node_id)
 
-        if command.type == CommandType.DELETE:
-            if self.store.delete(command.key):
-                return Response.deleted()
-            return Response.key_not_found()
+        return self._execute_local(command)
 
-        if command.type == CommandType.EXISTS:
-            if self.store.exists(command.key):
-                return Response.ok("1")
-            return Response.ok("0")
 
-        return Response.error("invalid command")
-        # === TODO END ===
+
 
     async def start(self) -> None:
         """
@@ -258,6 +248,31 @@ class KVServer:
             "total_requests": self._total_requests,
             "store_stats": self.store.get_stats(),
         }
+    
+    def _execute_local(self, command) -> Response:
+        if command.type == CommandType.UNKNOWN:
+            return Response.error("invalid command")
+
+        if command.type == CommandType.PUT:
+            self.store.put(command.key, command.value, command.ttl)
+            return Response.stored()
+
+
+        if command.type == CommandType.GET:
+            value = self.store.get(command.key)
+            if value is None:
+                return Response.key_not_found()
+            return Response.value_response(value)
+
+        if command.type == CommandType.DELETE:
+            if self.store.delete(command.key):
+                return Response.deleted()
+            return Response.key_not_found()
+
+        if command.type == CommandType.EXISTS:
+            return Response.ok("1" if self.store.exists(command.key) else "0")
+
+        return Response.error("invalid command")
 
 
 async def run_server(host: str = None, port: int = None) -> None:
@@ -279,3 +294,6 @@ async def run_server(host: str = None, port: int = None) -> None:
         logger.info("Server shutdown requested")
     finally:
         await server.stop()
+
+
+

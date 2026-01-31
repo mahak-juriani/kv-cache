@@ -36,5 +36,35 @@ class Settings:
     LOG_LEVEL: str = os.environ.get("KV_CACHE_LOG_LEVEL", "INFO")
 
 
+    # ===== Cluster settings (Task 1) =====
+
+    # Total shards in the system
+    NUM_SHARDS: int = int(os.environ.get("KV_CACHE_NUM_SHARDS", "3"))
+
+    # Node ID (0, 1, 2)
+    NODE_ID: int = int(os.environ.get("KV_CACHE_NODE_ID", "0"))
+
+    # Static cluster map: node_id -> (host, port)
+    CLUSTER_NODES = {
+        0: ("node1", 7171),
+        1: ("node2", 7171),
+        2: ("node3", 7171),
+    }
+
+
+    # Shard → primary node mapping
+    SHARD_TO_NODE = {
+        0: 0,
+        1: 1,
+        2: 2,
+    }
+
+    # Shard → replica node mapping (Task 2)
+    SHARD_TO_REPLICA = {
+        0: 2,
+        1: 0,
+        2: 1,
+    }
+
 # Global settings instance
 settings = Settings()

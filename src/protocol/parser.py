@@ -214,3 +214,21 @@ class ProtocolParser:
 
         return f"ERROR {response.message}\n"
         # === TODO END ===
+
+    def parse_response_string(self, data: str) -> Response:
+        if not data:
+            return Response.error("empty response")
+
+        parts = data.split(maxsplit=1)
+        status = parts[0]
+
+        if status == "OK":
+            if len(parts) == 2:
+                return Response.ok(message=parts[1], value=parts[1])
+            return Response.ok()
+
+        if status == "ERROR":
+            return Response.error(parts[1] if len(parts) == 2 else "unknown error")
+
+        return Response.error("invalid response")
+

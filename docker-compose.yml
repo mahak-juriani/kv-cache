@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  node1:
+    build: .
+    container_name: kv-node-1
+    environment:
+      KV_CACHE_NODE_ID: 0
+      KV_CACHE_PORT: 7171
+    ports:
+      - "7171:7171"
+    networks:
+      - kv-cluster
+
+  node2:
+    build: .
+    container_name: kv-node-2
+    environment:
+      KV_CACHE_NODE_ID: 1
+      KV_CACHE_PORT: 7171
+    ports:
+      - "7172:7171"
+    networks:
+      - kv-cluster
+
+  node3:
+    build: .
+    container_name: kv-node-3
+    environment:
+      KV_CACHE_NODE_ID: 2
+      KV_CACHE_PORT: 7171
+    ports:
+      - "7173:7171"
+    networks:
+      - kv-cluster
+
+networks:
+  kv-cluster:
+    driver: bridge
